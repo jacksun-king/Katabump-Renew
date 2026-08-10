@@ -8,8 +8,9 @@ import requests
 from seleniumbase import SB
 
 # 从环境变量获取账号密码和 TG 配置
-EMAIL        = os.environ.get("KATABUMP_EMAIL") or ""    # 登录邮箱
-PASSWORD     = os.environ.get("KATABUMP_PASSWORD") or "" # 账号密码
+# 多账号模式下使用 ACC / ACC_PWD（由 workflow 矩阵传入）
+EMAIL        = os.environ.get("ACC") or os.environ.get("KATABUMP_EMAIL") or ""    # 登录邮箱
+PASSWORD     = os.environ.get("ACC_PWD") or os.environ.get("KATABUMP_PASSWORD") or "" # 账号密码
 TG_CHAT_ID   = os.environ.get("TG_CHAT_ID") or ""        # tg通知 chat id(可选)
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN") or ""      # tg通知bot token(可选)
 

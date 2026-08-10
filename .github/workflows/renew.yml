@@ -1,19 +1,57 @@
-name: Katabump Auto Renew
+name: Katabump Auto Renew (多账号)
 
 on:
   schedule:
-  - cron: '0 2 */3 * *'  # 每天 UTC 0点 (北京时间 8点) 运行,根据服务到期时间自行修改
+    - cron: '0 2 */3 * *'  # 每3天 UTC 2点 (北京时间 10点), 根据服务到期时间自行修改
   workflow_dispatch: # 允许手动触发
 
 jobs:
-  Renew-Katabump:
+  # ===== 发现所有账号，构建矩阵 =====
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+    - name: 🎲 发现所有 KATABUMP_EML_x 账号
+      id: set-matrix
+      shell: bash
+      env:
+        ALL_SECRETS: ${{ toJson(secrets) }}
+      run: |
+        ACCOUNTS=$(echo "$ALL_SECRETS" | jq -r 'keys[] | select(startswith("KATABUMP_EML_"))' | sed 's/KATABUMP_EML_//' | shuf)
+        if [ -z "$ACCOUNTS" ]; then
+          # 兼容旧版：如果没有 KATABUMP_EML_x，尝试用单个账号
+          echo "⚠️ 未检测到 KATABUMP_EML_x 格式 Secrets，尝试使用旧版单账号..."
+          HAS_SINGLE=$(echo "$ALL_SECRETS" | jq 'has("KATABUMP_EMAIL")')
+          if [ "$HAS_SINGLE" = "true" ]; then
+            echo "matrix=[\"single\"]" >> $GITHUB_OUTPUT
+          else
+            echo "❌ 未检测到任何账号配置！请添加 KATABUMP_EML_1 / KATABUMP_PWD_1 等 Secrets"
+            exit 1
+          fi
+        else
+          INDEX_ARRAY=$(echo "$ACCOUNTS" | jq -R . | jq -s -c .)
+          echo "matrix=$INDEX_ARRAY" >> $GITHUB_OUTPUT
+          echo "✅ 发现 ${#ACCOUNTS[@]} 个账号: $ACCOUNTS"
+        fi
+
+  # ===== 每个账号依次执行续期 =====
+  renew:
+    needs: setup
     runs-on: ubuntu-latest
     permissions:
-      actions: write  
+      actions: write
       contents: read
-    
+    timeout-minutes: 60
+    strategy:
+      max-parallel: 1           # 串行执行，避免同时登录
+      fail-fast: false           # 一个账号失败不影响其他
+      matrix:
+        account_index: ${{ fromJson(needs.setup.outputs.matrix) }}
+
     steps:
     - uses: actions/checkout@v6
+
     - name: ⚙ 设置 Python
       uses: actions/setup-python@v6
       with:
@@ -33,16 +71,25 @@ jobs:
       run: |
         bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
-    - name: 🚀 运行续期脚本
+    - name: 🚀 运行账号 ${{ matrix.account_index }} 续期
       env:
-        KATABUMP_EMAIL: ${{ secrets.KATABUMP_EMAIL }}
-        KATABUMP_PASSWORD: ${{ secrets.KATABUMP_PASSWORD }}
+        ACC: ${{ secrets[format('KATABUMP_EML_{0}', matrix.account_index)] || secrets.KATABUMP_EMAIL }}
+        ACC_PWD: ${{ secrets[format('KATABUMP_PWD_{0}', matrix.account_index)] || secrets.KATABUMP_PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: |
+        echo "📋 开始处理账号索引: ${{ matrix.account_index }}"
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
-        
+
+    # ★ 15分钟间隔：当前账号跑完后等 15 分钟再执行下一个
+    # 单账号模式 ("single") 不等待；多账号模式每个账号之间间隔 15 分钟
+    - name: ⏸️ 15分钟间隔等待 (防止封号)
+      if: matrix.account_index != 'single'
+      run: |
+        echo "⏸️ 账号 ${{ matrix.account_index }} 续期完成，等待 15 分钟后执行下一个账号..."
+        sleep 900
+
     - name: 🧹 清理旧的工作流运行记录
       if: always()
       env:
