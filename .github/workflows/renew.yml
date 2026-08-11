@@ -2,7 +2,7 @@ name: Katabump Auto Renew (多账号)
 
 on:
   schedule:
-    - cron: '0 2 */3 * *'  # 每3天 UTC 2点 (北京时间 10点), 根据服务到期时间自行修改
+    - cron: '0 13 * * *'  # 每天 UTC 13:00 = 北京时间 21:00
   workflow_dispatch: # 允许手动触发
 
 jobs:
@@ -82,13 +82,12 @@ jobs:
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
 
-    # ★ 15分钟间隔：当前账号跑完后等 15 分钟再执行下一个
-    # 单账号模式 ("single") 不等待；多账号模式每个账号之间间隔 15 分钟
-    - name: ⏸️ 15分钟间隔等待 (防止封号)
+    # ★ 10分钟间隔：当前账号跑完后等 10 分钟再执行下一个
+    - name: ⏸️ 10分钟间隔等待 (防止封号)
       if: matrix.account_index != 'single'
       run: |
-        echo "⏸️ 账号 ${{ matrix.account_index }} 续期完成，等待 15 分钟后执行下一个账号..."
-        sleep 900
+        echo "⏸️ 账号 ${{ matrix.account_index }} 续期完成，等待 10 分钟后执行下一个账号..."
+        sleep 600
 
     - name: 🧹 清理旧的工作流运行记录
       if: always()
