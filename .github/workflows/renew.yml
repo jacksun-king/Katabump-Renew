@@ -34,7 +34,7 @@ jobs:
         else
           INDEX_ARRAY=$(echo "$ACCOUNTS" | jq -R . | jq -s -c .)
           echo "matrix=$INDEX_ARRAY" >> $GITHUB_OUTPUT
-          echo "last=$(echo "$ACCOUNTS" | awk '{print $NF}')" >> $GITHUB_OUTPUT
+          echo "last=$(echo "$ACCOUNTS" | awk 'END{print $NF}')" >> $GITHUB_OUTPUT
           echo "✅ 发现 $(echo "$ACCOUNTS" | wc -w) 个账号: $ACCOUNTS"
         fi
 
