@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      last: ${{ steps.set-matrix.outputs.last }}
     steps:
     - name: 🎲 发现所有 KATABUMP_EML_x 账号
       id: set-matrix
@@ -25,6 +26,7 @@ jobs:
           HAS_SINGLE=$(echo "$ALL_SECRETS" | jq 'has("KATABUMP_EMAIL")')
           if [ "$HAS_SINGLE" = "true" ]; then
             echo "matrix=[\"single\"]" >> $GITHUB_OUTPUT
+            echo "last=single" >> $GITHUB_OUTPUT
           else
             echo "❌ 未检测到任何账号配置！请添加 KATABUMP_EML_1 / KATABUMP_PWD_1 等 Secrets"
             exit 1
@@ -32,7 +34,8 @@ jobs:
         else
           INDEX_ARRAY=$(echo "$ACCOUNTS" | jq -R . | jq -s -c .)
           echo "matrix=$INDEX_ARRAY" >> $GITHUB_OUTPUT
-          echo "✅ 发现 ${#ACCOUNTS[@]} 个账号: $ACCOUNTS"
+          echo "last=$(echo "$ACCOUNTS" | awk '{print $NF}')" >> $GITHUB_OUTPUT
+          echo "✅ 发现 $(echo "$ACCOUNTS" | wc -w) 个账号: $ACCOUNTS"
         fi
 
   # ===== 每个账号依次执行续期 =====
@@ -82,9 +85,9 @@ jobs:
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
 
-    # ★ 10分钟间隔：当前账号跑完后等 10 分钟再执行下一个
+    # ★ 10分钟间隔：如果后面还有账号要执行才等待
     - name: ⏸️ 10分钟间隔等待 (防止封号)
-      if: matrix.account_index != 'single'
+      if: matrix.account_index != 'single' && matrix.account_index != needs.setup.outputs.last
       run: |
         echo "⏸️ 账号 ${{ matrix.account_index }} 续期完成，等待 10 分钟后执行下一个账号..."
         sleep 600
