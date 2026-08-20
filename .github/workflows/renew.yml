@@ -2,8 +2,8 @@ name: Katabump Auto Renew (多账号)
 
 on:
   schedule:
-    - cron: '0 11 * * *'  # 每天 UTC 11:00 = 北京时间 19:00（下午7点）
-  workflow_dispatch: # 允许手动触发
+    - cron: '0 11 * * *'  # 每天 UTC 11:00 = 北京时间 19:00
+  workflow_dispatch:
 
 jobs:
   # ===== 发现所有账号，构建矩阵 =====
@@ -13,29 +13,24 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       last: ${{ steps.set-matrix.outputs.last }}
     steps:
-    - name: 🎲 发现所有 KATABUMP_EML_x 账号
+    - name: 🎲 读取账号列表
       id: set-matrix
       shell: bash
       env:
-        ALL_SECRETS: ${{ toJson(secrets) }}
+        # 从 GitHub Variables 读取账号序号列表（逗号分隔），如 "1,2,3"
+        ACCOUNT_INDICES: ${{ vars.KATABUMP_ACCOUNTS || '' }}
       run: |
-        ACCOUNTS=$(echo "$ALL_SECRETS" | jq -r 'keys[] | select(startswith("KATABUMP_EML_"))' | sed 's/KATABUMP_EML_//' | shuf)
-        if [ -z "$ACCOUNTS" ]; then
-          # 兼容旧版：如果没有 KATABUMP_EML_x，尝试用单个账号
-          echo "⚠️ 未检测到 KATABUMP_EML_x 格式 Secrets，尝试使用旧版单账号..."
-          HAS_SINGLE=$(echo "$ALL_SECRETS" | jq 'has("KATABUMP_EMAIL")')
-          if [ "$HAS_SINGLE" = "true" ]; then
-            echo "matrix=[\"single\"]" >> $GITHUB_OUTPUT
-            echo "last=single" >> $GITHUB_OUTPUT
-          else
-            echo "❌ 未检测到任何账号配置！请添加 KATABUMP_EML_1 / KATABUMP_PWD_1 等 Secrets"
-            exit 1
-          fi
+        if [ -n "$ACCOUNT_INDICES" ]; then
+          INDICES=$(echo "$ACCOUNT_INDICES" | tr ',' '\n' | shuf | jq -R . | jq -s -c .)
+          LAST=$(echo "$ACCOUNT_INDICES" | awk -F',' '{print $NF}' | xargs)
+          echo "matrix=$INDICES" >> $GITHUB_OUTPUT
+          echo "last=$LAST" >> $GITHUB_OUTPUT
+          echo "✅ 发现 $(echo "$ACCOUNT_INDICES" | tr ',' '\n' | wc -l) 个账号: $ACCOUNT_INDICES"
         else
-          INDEX_ARRAY=$(echo "$ACCOUNTS" | jq -R . | jq -s -c .)
-          echo "matrix=$INDEX_ARRAY" >> $GITHUB_OUTPUT
-          echo "last=$(echo "$ACCOUNTS" | awk 'END{print $NF}')" >> $GITHUB_OUTPUT
-          echo "✅ 发现 $(echo "$ACCOUNTS" | wc -w) 个账号: $ACCOUNTS"
+          # 兼容旧版单账号
+          echo "⚠️ 未设置 KATABUMP_ACCOUNTS Variable，尝试单账号模式..."
+          echo "matrix=[\"single\"]" >> $GITHUB_OUTPUT
+          echo "last=single" >> $GITHUB_OUTPUT
         fi
 
   # ===== 每个账号依次执行续期 =====
@@ -47,8 +42,8 @@ jobs:
       contents: read
     timeout-minutes: 60
     strategy:
-      max-parallel: 1           # 串行执行，避免同时登录
-      fail-fast: false           # 一个账号失败不影响其他
+      max-parallel: 1
+      fail-fast: false
       matrix:
         account_index: ${{ fromJson(needs.setup.outputs.matrix) }}
 
@@ -85,8 +80,7 @@ jobs:
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
 
-    # ★ 10分钟间隔：如果后面还有账号要执行才等待
-    - name: ⏸️ 10分钟间隔等待 (防止封号)
+    - name: ⏸️ 10分钟间隔等待
       if: matrix.account_index != 'single' && matrix.account_index != needs.setup.outputs.last
       run: |
         echo "⏸️ 账号 ${{ matrix.account_index }} 续期完成，等待 10 分钟后执行下一个账号..."
