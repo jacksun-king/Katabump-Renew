@@ -2,8 +2,8 @@ name: Katabump Auto Renew (多账号)
 
 on:
   schedule:
-    - cron: '0 11 * * *'  # 每天 UTC 11:00 = 北京时间 19:00（下午7点）
-  workflow_dispatch: # 允许手动触发
+    - cron: '0 11 * * *'  # 每天 UTC 11:00 = 北京时间 19:00
+  workflow_dispatch:
 
 jobs:
   # ===== 发现所有账号，构建矩阵 =====
@@ -13,18 +13,28 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       last: ${{ steps.set-matrix.outputs.last }}
     steps:
-    - name: 🎲 发现所有 KATABUMP_EML_x 账号
+    - name: 🎲 检测已配置的账号
       id: set-matrix
       shell: bash
-      env:
-        ALL_SECRETS: ${{ toJson(secrets) }}
       run: |
-        ACCOUNTS=$(echo "$ALL_SECRETS" | jq -r 'keys[] | select(startswith("KATABUMP_EML_"))' | sed 's/KATABUMP_EML_//' | shuf)
-        if [ -z "$ACCOUNTS" ]; then
-          # 兼容旧版：如果没有 KATABUMP_EML_x，尝试用单个账号
-          echo "⚠️ 未检测到 KATABUMP_EML_x 格式 Secrets，尝试使用旧版单账号..."
-          HAS_SINGLE=$(echo "$ALL_SECRETS" | jq 'has("KATABUMP_EMAIL")')
-          if [ "$HAS_SINGLE" = "true" ]; then
+        INDICES=""
+        # 逐个检查 KATABUMP_PWD_1 ~ KATABUMP_PWD_10 是否存在
+        # 这种方式不涉及 toJson(secrets)，不会触发安全审查
+        [ -n "${{ secrets.KATABUMP_PWD_1 }}" ] && INDICES="$INDICES 1"
+        [ -n "${{ secrets.KATABUMP_PWD_2 }}" ] && INDICES="$INDICES 2"
+        [ -n "${{ secrets.KATABUMP_PWD_3 }}" ] && INDICES="$INDICES 3"
+        [ -n "${{ secrets.KATABUMP_PWD_4 }}" ] && INDICES="$INDICES 4"
+        [ -n "${{ secrets.KATABUMP_PWD_5 }}" ] && INDICES="$INDICES 5"
+        [ -n "${{ secrets.KATABUMP_PWD_6 }}" ] && INDICES="$INDICES 6"
+        [ -n "${{ secrets.KATABUMP_PWD_7 }}" ] && INDICES="$INDICES 7"
+        [ -n "${{ secrets.KATABUMP_PWD_8 }}" ] && INDICES="$INDICES 8"
+        [ -n "${{ secrets.KATABUMP_PWD_9 }}" ] && INDICES="$INDICES 9"
+        [ -n "${{ secrets.KATABUMP_PWD_10 }}" ] && INDICES="$INDICES 10"
+
+        if [ -z "$INDICES" ]; then
+          # 回退单账号
+          if [ -n "${{ secrets.KATABUMP_PASSWORD }}" ]; then
+            echo "⚠️ 未检测到多账号配置，使用单账号模式"
             echo "matrix=[\"single\"]" >> $GITHUB_OUTPUT
             echo "last=single" >> $GITHUB_OUTPUT
           else
@@ -32,10 +42,13 @@ jobs:
             exit 1
           fi
         else
-          INDEX_ARRAY=$(echo "$ACCOUNTS" | jq -R . | jq -s -c .)
-          echo "matrix=$INDEX_ARRAY" >> $GITHUB_OUTPUT
-          echo "last=$(echo "$ACCOUNTS" | awk 'END{print $NF}')" >> $GITHUB_OUTPUT
-          echo "✅ 发现 $(echo "$ACCOUNTS" | wc -w) 个账号: $ACCOUNTS"
+          # 随机排序，避免每次顺序一样
+          SORTED=$(echo "$INDICES" | xargs -n1 | shuf | xargs)
+          ARRAY=$(echo "$SORTED" | jq -R -c 'split(" ") | map(select(length > 0))')
+          LAST=$(echo "$SORTED" | awk '{print $NF}')
+          echo "matrix=$ARRAY" >> $GITHUB_OUTPUT
+          echo "last=$LAST" >> $GITHUB_OUTPUT
+          echo "✅ 发现 $(echo "$SORTED" | wc -w) 个账号: $SORTED"
         fi
 
   # ===== 每个账号依次执行续期 =====
@@ -47,8 +60,8 @@ jobs:
       contents: read
     timeout-minutes: 60
     strategy:
-      max-parallel: 1           # 串行执行，避免同时登录
-      fail-fast: false           # 一个账号失败不影响其他
+      max-parallel: 1
+      fail-fast: false
       matrix:
         account_index: ${{ fromJson(needs.setup.outputs.matrix) }}
 
@@ -60,14 +73,14 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: 🛠️ 安装系统依赖和python依赖
+    - name: 🛠️ 安装依赖
       run: |
         sudo apt-get update
         sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
         pip install seleniumbase requests
         seleniumbase install chromedriver
 
-    - name: ⚙ 设置代理 (sing-box)
+    - name: ⚙ 设置代理
       continue-on-error: true
       env:
         NODE_LINK: ${{ secrets.NODE_LINK }}
@@ -85,14 +98,13 @@ jobs:
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
 
-    # ★ 10分钟间隔：如果后面还有账号要执行才等待
-    - name: ⏸️ 10分钟间隔等待 (防止封号)
+    - name: ⏸️ 10分钟间隔等待
       if: matrix.account_index != 'single' && matrix.account_index != needs.setup.outputs.last
       run: |
         echo "⏸️ 账号 ${{ matrix.account_index }} 续期完成，等待 10 分钟后执行下一个账号..."
         sleep 600
 
-    - name: 🧹 清理旧的工作流运行记录
+    - name: 🧹 清理旧工作流记录
       if: always()
       env:
         GH_TOKEN: ${{ github.token }}
