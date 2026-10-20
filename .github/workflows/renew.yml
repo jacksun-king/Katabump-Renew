@@ -6,14 +6,68 @@ on:
   workflow_dispatch: # 允许手动触发
 
 jobs:
-  Renew-Katabump:
+  # ===== 发现所有账号，构建矩阵 =====
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      last: ${{ steps.set-matrix.outputs.last }}
+    steps:
+    - name: 🎲 检测已配置的账号
+      id: set-matrix
+      shell: bash
+      run: |
+        INDICES=""
+        # 逐个检查 KATABUMP_PWD_1 ~ KATABUMP_PWD_10 是否存在
+        # 这种方式不涉及 toJson(secrets)，不会触发安全审查
+        [ -n "${{ secrets.KATABUMP_PWD_1 }}" ] && INDICES="$INDICES 1"
+        [ -n "${{ secrets.KATABUMP_PWD_2 }}" ] && INDICES="$INDICES 2"
+        [ -n "${{ secrets.KATABUMP_PWD_3 }}" ] && INDICES="$INDICES 3"
+        [ -n "${{ secrets.KATABUMP_PWD_4 }}" ] && INDICES="$INDICES 4"
+        [ -n "${{ secrets.KATABUMP_PWD_5 }}" ] && INDICES="$INDICES 5"
+        [ -n "${{ secrets.KATABUMP_PWD_6 }}" ] && INDICES="$INDICES 6"
+        [ -n "${{ secrets.KATABUMP_PWD_7 }}" ] && INDICES="$INDICES 7"
+        [ -n "${{ secrets.KATABUMP_PWD_8 }}" ] && INDICES="$INDICES 8"
+        [ -n "${{ secrets.KATABUMP_PWD_9 }}" ] && INDICES="$INDICES 9"
+        [ -n "${{ secrets.KATABUMP_PWD_10 }}" ] && INDICES="$INDICES 10"
+
+        if [ -z "$INDICES" ]; then
+          # 回退单账号
+          if [ -n "${{ secrets.KATABUMP_PASSWORD }}" ]; then
+            echo "⚠️ 未检测到多账号配置，使用单账号模式"
+            echo "matrix=[\"single\"]" >> $GITHUB_OUTPUT
+            echo "last=single" >> $GITHUB_OUTPUT
+          else
+            echo "❌ 未检测到任何账号配置！请添加 KATABUMP_EML_1 / KATABUMP_PWD_1 等 Secrets"
+            exit 1
+          fi
+        else
+          # 随机排序，避免每次顺序一样
+          SORTED=$(echo "$INDICES" | xargs -n1 | shuf | xargs)
+          ARRAY=$(echo "$SORTED" | jq -R -c 'split(" ") | map(select(length > 0))')
+          LAST=$(echo "$SORTED" | awk '{print $NF}')
+          echo "matrix=$ARRAY" >> $GITHUB_OUTPUT
+          echo "last=$LAST" >> $GITHUB_OUTPUT
+          echo "✅ 发现 $(echo "$SORTED" | wc -w) 个账号: $SORTED"
+        fi
+
+  # ===== 每个账号依次执行续期 =====
+  renew:
+    needs: setup
     runs-on: ubuntu-latest
     permissions:
       contents: write
       actions: write
-    
+    timeout-minutes: 60
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        account_index: ${{ fromJson(needs.setup.outputs.matrix) }}
+
     steps:
     - uses: actions/checkout@v6
+
     - name: ⚙ 设置 Python
       uses: actions/setup-python@v6
       with:
@@ -33,13 +87,14 @@ jobs:
       run: |
         bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
-    - name: 🚀 运行续期脚本
+    - name: 🚀 运行账号 ${{ matrix.account_index }} 续期脚本
       env:
-        KATABUMP_EMAIL: ${{ secrets.KATABUMP_EMAIL }}
-        KATABUMP_PASSWORD: ${{ secrets.KATABUMP_PASSWORD }}
+        ACC: ${{ secrets[format('KATABUMP_EML_{0}', matrix.account_index)] || secrets.KATABUMP_EMAIL }}
+        ACC_PWD: ${{ secrets[format('KATABUMP_PWD_{0}', matrix.account_index)] || secrets.KATABUMP_PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: |
+        echo "📋 开始处理账号索引: ${{ matrix.account_index }}"
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
 
@@ -56,7 +111,7 @@ jobs:
           git commit -m "⏱️ Auto Update by Github Actions $(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M:%S')"
           git push origin main
         fi
-        
+
     - name: 🧹 清理旧的工作流运行记录
       if: always()
       env:
