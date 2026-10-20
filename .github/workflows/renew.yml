@@ -55,9 +55,6 @@ jobs:
   renew:
     needs: setup
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      actions: write
     timeout-minutes: 60
     strategy:
       max-parallel: 1
@@ -98,6 +95,17 @@ jobs:
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
 
+  # ===== 所有账号跑完后，统一更新 time.txt + 清理记录 =====
+  finalize:
+    needs: renew
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+    - uses: actions/checkout@v6
+
     # 更新时间到time.txt,避免90天未更新导致工作流暂停
     - name: 🕒 更新运行时间
       run: |
@@ -113,7 +121,6 @@ jobs:
         fi
 
     - name: 🧹 清理旧的工作流运行记录
-      if: always()
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
